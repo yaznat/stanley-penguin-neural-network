@@ -1,0 +1,2328 @@
+; --- Neural Network in Stanley/Penguin ---
+;
+; Trains a neural network on a subset of 18000 images from the MNIST dataset, reaching TODO test accuracy on a 2000 image test set.
+; Uses a fixed-point representation to work within integer arithmetic.
+; Uses a custom call stack implementation to enable reusable functions.
+;
+; -- Architecture --
+; - Linear(64)
+; - Relu()
+; - Linear(10)
+; - Argmax()
+
+                JMP    start
+
+; --- constants ---
+N_TRAIN_IMAGES: 20992
+ N_TEST_IMAGES: 2048
+
+    BATCH_SIZE: 256
+     INPUT_DIM: 784                                 ; MNIST: 28 x 28 images
+     N_CLASSES: 10                                  ; 10 digits
+
+    HIDDEN_DIM: 64
+
+        EPOCHS: 10
+    LR_PERCENT: 10                                  ; learning rate as an integer percentage
+
+    STACK_SIZE: 128                                 ; words allocated for the call stack
+
+; --- fixed-point representation ---
+;
+; Since the Stanley/Penguin can only perform integer arithmetic, we use a fixed-point representation.
+; We select 12 fractional bits: S = 2^12 = 4096.
+
+             S: 4096
+
+; --- he init constants ---
+;
+; Following He initialization, we precompute the initialization ranges for W1 and W2.
+; Given the lack of a SQRT command, we provide the values manually for convenience.
+;
+; Formula for a layer with n input neurons:
+;
+; W ~ U (-sqrt(6/n), +sqrt(6/n)) 
+
+ W1_INIT_RANGE: 358
+ W2_INIT_RANGE: 1254
+
+; --- arithmetic constants ---
+       NEG_ONE: -1
+          ZERO: 0
+           ONE: 1
+           TWO: 2
+           TEN: 10
+   ONE_HUNDRED: 100
+
+ MASK_7FFFFFFF: 0x7FFFFFFF
+
+; --- global call values (managed by the stack) ---
+   destination: 0                                   ; set by caller: LOAD FUNC_ADDR / STORE destination
+        return: 0                                   ; set by caller: LOAD IP_ADDR / STORE return / "JMP push"
+
+         arg_0: 0                                   ; staging: outgoing args
+         arg_1: 0
+         arg_2: 0
+         arg_3: 0
+         arg_4: 0
+         arg_5: 0
+         arg_6: 0
+
+       param_0: 0                                   ; params of the currently running function
+       param_1: 0
+       param_2: 0
+       param_3: 0
+       param_4: 0
+       param_5: 0
+       param_6: 0
+
+; --- pointers and sizes (to compute) ---
+
+; -- call stack --
+         stack: PROGRAM_END                         ; hard-coded to immediately enable call stack
+
+; -- dataset --
+       x_train: 0
+       y_train: 0
+        x_test: 0
+        y_test: 0
+
+  X_TRAIN_SIZE: 0
+   X_TEST_SIZE: 0
+
+; -- input --
+             X: 0
+     ONE_HOT_Y: 0
+
+        X_SIZE: 0
+ONE_HOT_Y_SIZE: 0
+
+; -- weights --
+            W1: 0
+            B1: 0
+            W2: 0
+            B2: 0
+
+       W1_SIZE: 0
+       W2_SIZE: 0
+
+; -- weight gradients --
+           dW1: 0
+           dB1: 0
+           dW2: 0
+           dB2: 0
+
+; -- forward outputs --
+            Z1: 0
+            A1: 0
+            Z2: 0
+
+       Z1_SIZE: 0
+       Z2_SIZE: 0
+
+; -- backward gradients --
+           dZ2: 0
+           dA1: 0
+           dZ1: 0
+
+; -- buffers to store transpose in backward pass --
+          W2_T: 0
+           X_T: 0
+          A1_T: 0
+
+; -- MNIST csv file --
+       csv_ptr: 0
+
+INIT_PTRS_ADDR: init_ptrs
+
+; -- function to initialize pointers --
+     init_ptrs: LOAD   N_TRAIN_IMAGES
+                MUL    INPUT_DIM
+                STORE  X_TRAIN_SIZE
+
+                LOAD   N_TEST_IMAGES
+                MUL    INPUT_DIM
+                STORE  X_TEST_SIZE
+
+                LOAD   BATCH_SIZE
+                MUL    INPUT_DIM
+                STORE  X_SIZE
+
+                LOAD   BATCH_SIZE
+                MUL    N_CLASSES
+                STORE  ONE_HOT_Y_SIZE
+     
+                LOAD   INPUT_DIM
+                MUL    HIDDEN_DIM
+                STORE  W1_SIZE
+
+                LOAD   HIDDEN_DIM
+                MUL    N_CLASSES
+                STORE  W2_SIZE
+
+                LOAD   HIDDEN_DIM
+                MUL    BATCH_SIZE
+                STORE  Z1_SIZE
+
+                LOAD   N_CLASSES
+                MUL    BATCH_SIZE
+                STORE  Z2_SIZE
+                
+                LOAD   stack
+                ADD    STACK_SIZE
+                STORE  x_train
+
+                ADD    X_TRAIN_SIZE
+                STORE  y_train
+
+                ADD    N_TRAIN_IMAGES
+                STORE  x_test
+
+                ADD    X_TEST_SIZE
+                STORE  y_test
+
+                ADD    N_TEST_IMAGES
+                STORE  X
+              
+                ADD    X_SIZE
+                STORE  ONE_HOT_Y
+
+                ADD    ONE_HOT_Y_SIZE
+                STORE  W1
+
+                ADD    W1_SIZE
+                STORE  B1
+
+                ADD    HIDDEN_DIM
+                STORE  W2
+
+                ADD    W2_SIZE
+                STORE  B2
+
+                ADD    N_CLASSES
+                STORE  dW1
+
+                ADD    W1_SIZE
+                STORE  dB1
+
+                ADD    HIDDEN_DIM
+                STORE  dW2
+
+                ADD    W2_SIZE
+                STORE  dB2
+
+                ADD    N_CLASSES
+                STORE  Z1
+
+                ADD    Z1_SIZE
+                STORE  A1
+
+                ADD    Z1_SIZE
+                STORE  Z2
+
+                ADD    Z2_SIZE
+                STORE  dZ2
+
+                ADD    Z2_SIZE
+                STORE  dA1
+
+                ADD    Z1_SIZE
+                STORE  dZ1
+
+                ADD    Z1_SIZE
+                STORE  W2_T
+
+                ADD    W2_SIZE
+                STORE  X_T
+
+                ADD    X_SIZE
+                STORE  A1_T
+
+                ADD    Z1_SIZE
+                STORE  csv_ptr
+
+                JMP    pop
+
+; --- main ---
+                ; -- calculate pointers --
+         start: LOAD   INIT_PTRS_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+                
+                ; -- initialize weights and biases --
+                LOAD   INIT_WTS_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+                
+                ; -- load and partition dataset from CSV --
+                LOAD   LOAD_DS_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- run training loop --         
+                LOAD   TRAIN_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                JMP    end
+
+; --- initialize weights and biases ---
+;
+; Initializes weights with He and biases to 0.
+
+ INIT_WTS_ADDR: init_weights
+
+  init_weights: LOAD   FILL_HE_ADDR
+                STORE  destination
+
+                LOAD   W1
+                STORE  arg_0
+                LOAD   W1_SIZE
+                STORE  arg_1
+                LOAD   W1_INIT_RANGE
+                STORE  arg_2
+
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   W2
+                STORE  arg_0
+                LOAD   W2_SIZE
+                STORE  arg_1
+                LOAD   W2_INIT_RANGE
+                STORE  arg_2
+
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   FILL_ADDR
+                STORE  destination
+
+                LOAD   B1
+                STORE  arg_0
+                LOAD   HIDDEN_DIM
+                STORE  arg_1
+                LOAD   ZERO
+                STORE  arg_2
+ 
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   B2
+                STORE  arg_0
+                LOAD   N_CLASSES
+                STORE  arg_1
+                LOAD   ZERO
+                STORE  arg_2
+
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                JMP    pop
+
+; --- train network ---
+;
+; Complete training loop for the neural network. Prints status and incremental train accuracy.
+; Assumes weights have already been initialized.
+
+    TRAIN_ADDR: setup_train
+
+    curr_epoch: 0
+    curr_batch: 0
+   num_batches: 0
+ correct_count: 0
+
+        cc_ptr: correct_count
+
+   setup_train: LOAD   ZERO
+                STORE  curr_epoch
+                STORE  curr_batch
+                LOAD   N_TRAIN_IMAGES
+                DIV    BATCH_SIZE
+                STORE  num_batches
+                JMP    train_epoch
+
+     epoch_inc: LOAD   ZERO
+                STORE  curr_batch
+
+                LOAD   curr_epoch
+                ADD    ONE
+                STORE  curr_epoch
+
+                LOAD   ASCII_NEWLINE
+                WRITE  0x01
+
+   train_epoch: LOAD   curr_epoch
+                SUB    EPOCHS
+                JZ     pop
+                
+   train_batch: LOAD   curr_batch
+                SUB    num_batches
+                JZ     epoch_inc
+
+                ; -- load x and y --
+                LOAD   ZERO
+                STORE  arg_0
+                LOAD   curr_batch
+                STORE  arg_1
+
+                LOAD   LOAD_X_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   LOAD_Y_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- forward pass --
+                LOAD   FORWARD_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- count correct --
+                LOAD   Z2
+                STORE  arg_0
+                LOAD   ONE_HOT_Y
+                STORE  arg_1
+                LOAD   cc_ptr
+                STORE  arg_2
+
+                LOAD   CORRECT_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- backward pass --
+                LOAD   BACKWARD_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- update weights --
+                LOAD   UPDATE_W_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- print update --
+                LOAD   ASCII_CARRIAGE
+                WRITE  0x01
+
+                LOAD   epoch_ptr
+                STORE  arg_0
+                LOAD   epoch_back
+                STORE  arg_1
+
+                LOAD   STRING_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SPACE
+                WRITE  0x01
+
+                LOAD   curr_epoch
+                ADD    ONE
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SLASH
+                WRITE  0x01
+
+                LOAD   EPOCHS
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_COMMA
+                WRITE  0x01
+
+                LOAD   ASCII_SPACE
+                WRITE  0x01
+
+                LOAD   batch_ptr
+                STORE  arg_0
+                LOAD   batch_back
+                STORE  arg_1
+
+                LOAD   STRING_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SPACE
+                WRITE  0x01
+
+                LOAD   curr_batch
+                ADD    ONE
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SLASH
+                WRITE  0x01
+
+                LOAD   num_batches
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_COMMA
+                WRITE  0x01
+
+                LOAD   ASCII_SPACE
+                WRITE  0x01
+
+                LOAD   correct_ptr
+                STORE  arg_0
+                LOAD   correct_back
+                STORE  arg_1
+
+                LOAD   STRING_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SPACE
+                WRITE  0x01
+
+                LOAD   correct_count
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SLASH
+                WRITE  0x01
+
+                LOAD   BATCH_SIZE
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   curr_batch
+                ADD    ONE
+                STORE  curr_batch
+                JMP    train_batch
+
+; -- string assets --
+   ASCII_SPACE: 0x20
+   ASCII_SLASH: 0x2F
+ASCII_CARRIAGE: 0x0D
+
+     batch_ptr: b_0
+           b_0: 0x42                                ; 'B'
+           b_1: 0x61                                ; 'a'
+           b_2: 0x74                                ; 't'
+           b_3: 0x63                                ; 'c'
+           b_4: 0x68                                ; 'h'
+           b_5: 0x3A                                ; ':'
+    batch_back: b_5
+
+     epoch_ptr: ep_0
+           ep_0: 0x45                                ; 'E'
+           ep_1: 0x70                                ; 'p'
+           ep_2: 0x6F                                ; 'o'
+           ep_3: 0x63                                ; 'c'
+           ep_4: 0x68                                ; 'h'
+           ep_5: 0x3A                                ; ':'
+    epoch_back: ep_5
+    
+  correct_ptr: a_0
+           a_0: 0x43                                ; 'C'
+           a_1: 0x6F                                ; 'o'
+           a_2: 0x72                                ; 'r'
+           a_3: 0x72                                ; 'r'
+           a_4: 0x65                                ; 'e'
+           a_5: 0x63                                ; 'c'
+           a_6: 0x74                                ; 't'
+           a_7: 0x3A                                ; ':'
+  correct_back: a_7
+
+
+
+; --- forward pass ---
+;
+; Complete forward pass through the neural network. 
+; Assumes that proper data has been loaded into all participating matrices beforehand.
+
+  FORWARD_ADDR: forward
+                  
+                ; -- Z1 = X @ W1 --
+       forward: LOAD   BATCH_SIZE
+                STORE  arg_0
+                LOAD   INPUT_DIM
+                STORE  arg_1
+                STORE  arg_2
+                LOAD   HIDDEN_DIM
+                STORE  arg_3
+                LOAD   X
+                STORE  arg_4
+                LOAD   W1
+                STORE  arg_5
+                LOAD   Z1
+                STORE  arg_6
+
+                LOAD   MATMUL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- A1 = ReLU(Z1) --
+                LOAD   Z1
+                STORE  arg_0
+                LOAD   A1
+                STORE  arg_1
+                LOAD   Z1_SIZE
+                STORE  arg_2
+
+                LOAD   RELU_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- Z2 = A1 @ W2 --
+                LOAD   BATCH_SIZE
+                STORE  arg_0
+                LOAD   HIDDEN_DIM
+                STORE  arg_1
+                STORE  arg_2
+                LOAD   N_CLASSES
+                STORE  arg_3
+                LOAD   A1
+                STORE  arg_4
+                LOAD   W2
+                STORE  arg_5
+                LOAD   Z2
+                STORE  arg_6
+                
+                LOAD   MATMUL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                JMP    pop
+
+; --- backward pass ---
+;
+; Complete backward pass through the neural network. 
+; Assumes that proper data has been loaded into all participating matrices beforehand.
+
+  BACKWARD_ADDR: backward
+                  
+                ; -- dZ2 = Z2 - Y --
+      backward: LOAD   Z2
+                STORE  arg_0
+                LOAD   ONE_HOT_Y
+                STORE  arg_1
+                LOAD   dZ2
+                STORE  arg_2
+                LOAD   Z2_SIZE
+                STORE  arg_3
+
+                LOAD   SUB_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- dW2 = A1ᵀ @ dZ2 * 1/N --
+                LOAD   BATCH_SIZE
+                STORE  arg_0
+                LOAD   HIDDEN_DIM
+                STORE  arg_1
+                LOAD   A1
+                STORE  arg_2
+                LOAD   A1_T
+                STORE  arg_3
+
+                LOAD   MAT_TRANS_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   HIDDEN_DIM
+                STORE  arg_0
+                LOAD   BATCH_SIZE
+                STORE  arg_1
+                STORE  arg_2
+                LOAD   N_CLASSES
+                STORE  arg_3
+                LOAD   A1_T
+                STORE  arg_4
+                LOAD   dZ2
+                STORE  arg_5
+                LOAD   dW2
+                STORE  arg_6
+
+                LOAD   MATMUL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+                
+                JMP    push
+
+                LOAD   dW2
+                STORE  arg_0
+                STORE  arg_1
+                LOAD   S
+                DIV    BATCH_SIZE
+                STORE  arg_2
+                LOAD   W2_SIZE
+                STORE  arg_3
+
+                LOAD   MUL_SCLR_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- dA1 = dZ2 @ W2ᵀ --
+                LOAD   HIDDEN_DIM
+                STORE  arg_0
+                LOAD   N_CLASSES
+                STORE  arg_1
+                LOAD   W2
+                STORE  arg_2
+                LOAD   W2_T
+                STORE  arg_3
+
+                LOAD   MAT_TRANS_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   BATCH_SIZE
+                STORE  arg_0
+                LOAD   N_CLASSES
+                STORE  arg_1
+                STORE  arg_2
+                LOAD   HIDDEN_DIM
+                STORE  arg_3
+                LOAD   dZ2
+                STORE  arg_4
+                LOAD   W2_T
+                STORE  arg_5
+                LOAD   dA1
+                STORE  arg_6
+
+                LOAD   MATMUL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+                
+                JMP    push
+
+                ; -- dZ1 = dA1 * dRelu(Z1) --
+                LOAD   Z1
+                STORE  arg_0
+                LOAD   dZ1
+                STORE  arg_1
+                LOAD   Z1_SIZE
+                STORE  arg_2
+
+                LOAD   DRELU_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   dA1
+                STORE  arg_0
+                LOAD   dZ1
+                STORE  arg_1
+                STORE  arg_2
+                LOAD   Z1_SIZE
+                STORE  arg_3
+
+                LOAD   MUL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+                
+                JMP    push
+
+                ; -- dW1 = Xᵀ @ dZ1 * 1/N --
+                LOAD   BATCH_SIZE
+                STORE  arg_0
+                LOAD   INPUT_DIM
+                STORE  arg_1
+                LOAD   X
+                STORE  arg_2
+                LOAD   X_T
+                STORE  arg_3
+
+                LOAD   MAT_TRANS_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   INPUT_DIM
+                STORE  arg_0
+                LOAD   BATCH_SIZE
+                STORE  arg_1
+                STORE  arg_2
+                LOAD   HIDDEN_DIM
+                STORE  arg_3
+                LOAD   X_T
+                STORE  arg_4
+                LOAD   dZ1
+                STORE  arg_5
+                LOAD   dW1
+                STORE  arg_6
+
+                LOAD   MATMUL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+                
+                JMP    push
+
+                LOAD   dW1
+                STORE  arg_0
+                STORE  arg_1
+                LOAD   S
+                DIV    BATCH_SIZE
+                STORE  arg_2
+                LOAD   W1_SIZE
+                STORE  arg_3
+
+                LOAD   MUL_SCLR_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                JMP    pop
+
+; --- update weights ---
+;
+; Updates weight values.
+; Assumes that weight gradients are properly stored.
+
+ UPDATE_W_ADDR: update_weights
+
+update_weights: LOAD   dW1
+                STORE  arg_0
+                STORE  arg_1
+                LOAD   LR_PERCENT
+                MUL    S
+                DIV    ONE_HUNDRED
+                STORE  arg_2
+                LOAD   W1_SIZE
+                STORE  arg_3
+
+                LOAD   MUL_SCLR_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   W1
+                STORE  arg_0
+                STORE  arg_2
+                LOAD   dW1
+                STORE  arg_1
+                LOAD   W1_SIZE
+                STORE  arg_3
+
+                LOAD   SUB_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   dW2
+                STORE  arg_0
+                STORE  arg_1
+                LOAD   LR_PERCENT
+                MUL    S
+                DIV    ONE_HUNDRED
+                STORE  arg_2
+                LOAD   W2_SIZE
+                STORE  arg_3
+
+                LOAD   MUL_SCLR_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   W2
+                STORE  arg_0
+                STORE  arg_2
+                LOAD   dW2
+                STORE  arg_1
+                LOAD   W2_SIZE
+                STORE  arg_3
+
+                LOAD   SUB_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                JMP    pop
+
+; --- matmul ---
+; param_0:  rows in matrix A
+; param_1:  cols in matrix A
+; param_2:  rows in matrix B
+; param_3:  cols in matrix B
+; param_4:  pointer to matrix A
+; param_5:  pointer to matrix B
+; param_6:  pointer to result matrix C
+;
+; Performs matrix multiplication between two matrices.
+
+   MATMUL_ADDR: matmul
+
+; -- iteration vars --
+             i: 0
+             j: 0
+             k: 0
+
+; -- temporary vars --
+         ptr_0: 0
+         ptr_1: 0
+         ptr_2: 0
+       product: 0
+
+        matmul: LOAD   param_1
+                SUB    param_2
+                JGZ    invalid_dims
+                JLZ    invalid_dims
+
+                LOAD   ZERO
+                STORE  i
+                LOAD   ZERO
+                STORE  j
+                LOAD   ZERO
+                STORE  k
+
+                ; -- initialize c to zero --
+                LOAD   param_6
+                STORE  arg_0
+
+                LOAD   param_0
+                MUL    param_3
+                STORE  arg_1
+
+                LOAD   ZERO
+                STORE  arg_2
+
+                LOAD   FILL_ADDR
+                STORE  destination
+
+                LOAD   IP_ADDR
+                STORE  return
+                
+                JMP    push
+
+                ; -- perform matmul with nested loops --
+        i_loop: LOAD   i
+                SUB    param_0
+                JZ     pop
+
+                ; -- reset j --
+                LOAD   ZERO
+                STORE  j
+                JMP    j_loop
+
+         i_inc: LOAD   i
+                ADD    ONE
+                STORE  i
+                JMP    i_loop
+
+        j_loop: LOAD   j
+                SUB    param_3
+                JZ     i_inc
+       
+                ; -- reset k --
+                LOAD   ZERO
+                STORE  k
+                JMP    k_loop
+        
+         j_inc: LOAD   j
+                ADD    ONE
+                STORE  j
+                JMP    j_loop
+
+        k_loop: LOAD   k
+                SUB    param_1
+                JZ     j_inc
+     
+                ; -- C[i * cols_b + j] --
+                LOAD   i
+                MUL    param_3
+                ADD    j
+                ADD    param_6
+                STORE  ptr_0
+     
+                ; -- A[i * cols_a + k] --
+                LOAD   i
+                MUL    param_1
+                ADD    k
+                ADD    param_4
+                STORE  ptr_1
+
+                ; -- B[k * cols_b + j] --
+                LOAD   k
+                MUL    param_3
+                ADD    j
+                ADD    param_5
+                STORE  ptr_2
+
+                ; -- C += A * B --
+                LOAD   [ptr_1]
+                MUL    [ptr_2]
+                DIV    S                            ; account for fixed-point representation
+                STORE  product
+
+                LOAD   [ptr_0]
+                ADD    product
+                STORE  [ptr_0]
+
+                JMP    k_inc      
+
+         k_inc: LOAD   k
+                ADD    ONE
+                STORE  k
+                JMP    k_loop
+
+  invalid_dims: LOAD   invalid_ptr
+                STORE  arg_0
+                LOAD   invalid_back
+                STORE  arg_1
+                JMP    exit_with_err
+
+   invalid_ptr: i_0
+           i_0: 0x69                                ; 'i'
+           i_1: 0x6e                                ; 'n'
+           i_2: 0x76                                ; 'v'
+           i_3: 0x61                                ; 'a'
+           i_4: 0x6c                                ; 'l'
+           i_5: 0x69                                ; 'i'
+           i_6: 0x64                                ; 'd'
+           i_7: 0x20                                ; ' '
+           i_8: 0x6d                                ; 'm'
+           i_9: 0x61                                ; 'a'
+          i_10: 0x74                                ; 't'
+          i_11: 0x72                                ; 'r'
+          i_12: 0x69                                ; 'i'
+          i_13: 0x78                                ; 'x'
+          i_14: 0x20                                ; ' '
+          i_15: 0x64                                ; 'd'
+          i_16: 0x69                                ; 'i'
+          i_17: 0x6d                                ; 'm'
+          i_18: 0x73                                ; 's'
+          i_19: 0x0A                                ; '\n'
+  invalid_back: i_19
+
+
+; --- ReLU ---
+; param_0:  pointer to input array
+; param_1:  pointer to result array
+; param_2:  length of array
+;
+; Performs the ReLU activation.
+
+     RELU_ADDR: setup_relu
+
+  relu_rel_idx: 0
+   relu_in_ptr: 0
+  relu_out_ptr: 0
+
+    setup_relu: LOAD   ZERO
+                STORE  relu_rel_idx
+
+          relu: LOAD   relu_rel_idx
+                SUB    param_2
+                JZ     pop
+
+                LOAD   param_0
+                ADD    relu_rel_idx
+                STORE  relu_in_ptr
+
+                LOAD   param_1
+                ADD    relu_rel_idx
+                STORE  relu_out_ptr
+
+                LOAD   [relu_in_ptr]
+                JLZ    relu_zero
+                STORE  [relu_out_ptr]
+                JMP    relu_inc
+
+     relu_zero: LOAD   ZERO
+                STORE  [relu_out_ptr]
+
+      relu_inc: LOAD   relu_rel_idx
+                ADD    ONE
+                STORE  relu_rel_idx
+                JMP    relu
+
+; --- dReLU ---
+; param_0:  pointer to input array
+; param_1:  pointer to result array
+; param_2:  length of array
+;
+; Performs the derivative of the ReLU activation.
+
+     DRELU_ADDR: setup_drelu
+
+ drelu_rel_idx: 0
+  drelu_in_ptr: 0
+ drelu_out_ptr: 0
+
+   setup_drelu: LOAD   ZERO
+                STORE  drelu_rel_idx
+
+         drelu: LOAD   drelu_rel_idx
+                SUB    param_2
+                JZ     pop
+
+                LOAD   param_0
+                ADD    drelu_rel_idx
+                STORE  drelu_in_ptr
+
+                LOAD   param_1
+                ADD    drelu_rel_idx
+                STORE  drelu_out_ptr
+
+                LOAD   [drelu_in_ptr]
+                JGZ    drelu_one
+                LOAD   ZERO
+                STORE  [drelu_out_ptr]
+                JMP    drelu_inc
+
+     drelu_one: LOAD   S
+                STORE  [drelu_out_ptr]
+
+     drelu_inc: LOAD   drelu_rel_idx
+                ADD    ONE
+                STORE  drelu_rel_idx
+                JMP    drelu
+
+; --- matrix transpose ---
+; param_0:  rows in matrix
+; param_1:  cols in matrix
+; param_2:  pointer to matrix
+; param_3:  pointer to result matrix
+;
+; Transposes a 2D matrix.
+
+MAT_TRANS_ADDR: transpose
+
+; -- iteration vars --
+             a: 0
+             b: 0
+
+; -- temporary vars --
+      old_addr: 0
+      new_addr: 0
+
+     transpose: LOAD   ZERO
+                STORE  a
+                LOAD   ZERO
+                STORE  b
+
+        a_loop: LOAD   a
+                SUB    param_0
+                JZ     pop
+
+                ; -- reset b --
+                LOAD   ZERO
+                STORE  b
+                JMP    b_loop
+
+         a_inc: LOAD   a
+                ADD    ONE
+                STORE  a
+                JMP    a_loop
+
+        b_loop: LOAD   b
+                SUB    param_1
+                JZ     a_inc
+
+                LOAD   a
+                MUL    param_1
+                ADD    b
+                ADD    param_2
+                STORE  old_addr
+
+                LOAD   b
+                MUL    param_0
+                ADD    a
+                ADD    param_3
+                STORE  new_addr
+
+                LOAD   [old_addr]
+                STORE  [new_addr]
+
+         b_inc: LOAD   b
+                ADD    ONE
+                STORE  b
+                JMP    b_loop
+
+; --- load dataset ---
+;
+; Loads the MNIST csv into a parsed dataset.
+
+  LOAD_DS_ADDR: load_ds
+
+     CSV_BYTES: 0                                   ; to calculate in `load_csv`
+
+; -- ascii values --
+       ASCII_0: 0x30
+       ASCII_1: 0x31
+       ASCII_2: 0x32
+       ASCII_3: 0x33
+       ASCII_4: 0x34
+       ASCII_5: 0x35
+       ASCII_6: 0x36
+       ASCII_7: 0x37
+       ASCII_8: 0x38
+       ASCII_9: 0x39
+   ASCII_COMMA: 0x2C
+ ASCII_NEWLINE: 0x0A
+
+; -- local variables --
+  curr_csv_row: 0
+  curr_csv_col: 0
+ curr_csv_addr: 0
+ curr_csv_char: 0
+  curr_int_val: 0
+   temp_result: 0
+
+             x: 0                                   ; iteration
+
+       load_ds: LOAD   LOAD_CSV_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   csv_ptr
+                STORE  curr_csv_addr
+
+                LOAD   ZERO
+                STORE  x
+                STORE  curr_csv_row
+                STORE  curr_csv_col
+                STORE  curr_int_val
+
+        x_loop: LOAD   x
+                SUB    CSV_BYTES
+                JZ     pop
+
+                LOAD   [curr_csv_addr]
+                STORE  curr_csv_char
+
+    accumulate: SUB    ASCII_0
+                JLZ    delimit_check
+
+                LOAD   curr_csv_char
+                SUB    ASCII_9
+                JGZ    delimit_check
+
+                LOAD   curr_csv_char
+                SUB    ASCII_0
+                STORE  temp_result
+
+                LOAD   curr_int_val
+                MUL    TEN
+                ADD    temp_result
+                STORE  curr_int_val
+
+ delimit_check: LOAD   curr_csv_char
+                SUB    ASCII_COMMA
+                JZ     label_check
+
+                LOAD   curr_csv_char
+                SUB    ASCII_NEWLINE
+                JZ     label_check
+
+                LOAD   x
+                ADD    ONE
+                SUB    CSV_BYTES
+                JZ     label_check
+
+                JMP    x_inc
+
+   label_check: LOAD   curr_csv_col
+                JZ     load_l_check
+                JMP    load_p_check
+       
+  load_l_check: LOAD   curr_csv_row
+                SUB    N_TRAIN_IMAGES
+                JLZ    load_train_l
+
+   load_test_l: LOAD   y_test
+                SUB    N_TRAIN_IMAGES
+                JMP    load_l
+
+  load_train_l: LOAD   y_train
+
+        load_l: ADD    curr_csv_row
+                STORE  temp_result
+                LOAD   curr_int_val
+                STORE  [temp_result]
+
+                JMP    reset_acc
+
+  load_p_check: LOAD   curr_csv_row
+                MUL    INPUT_DIM
+                ADD    curr_csv_col
+                SUB    ONE
+                STORE  temp_result
+  
+                LOAD   curr_csv_row
+                SUB    N_TRAIN_IMAGES
+                JLZ    load_train_p
+
+   load_test_p: LOAD   curr_csv_row
+                SUB    N_TRAIN_IMAGES
+                MUL    INPUT_DIM
+                ADD    curr_csv_col
+                SUB    ONE
+                ADD    x_test
+                STORE  temp_result
+                JMP    load_p
+ 
+  load_train_p: LOAD   curr_csv_row
+                MUL    INPUT_DIM
+                ADD    curr_csv_col
+                SUB    ONE
+                ADD    x_train
+                STORE  temp_result
+ 
+        load_p: LOAD   curr_int_val
+                STORE  [temp_result]   
+
+     reset_acc: LOAD   ZERO
+                STORE  curr_int_val
+
+                LOAD   curr_csv_char
+                SUB    ASCII_NEWLINE
+                JZ     advance_row
+
+                LOAD   x
+                ADD    ONE
+                SUB    CSV_BYTES
+                JZ     advance_row
+
+   advance_col: LOAD   curr_csv_col
+                ADD    ONE
+                STORE  curr_csv_col
+                JMP    x_inc
+
+   advance_row: LOAD   curr_csv_row
+                ADD    ONE
+                STORE  curr_csv_row
+
+                LOAD   ZERO
+                STORE  curr_csv_col
+                
+         x_inc: LOAD   x
+                ADD    ONE
+                STORE  x
+
+                LOAD   curr_csv_addr
+                ADD    ONE
+                STORE  curr_csv_addr
+
+                JMP    x_loop
+
+; --- load from csv ---
+;
+; Loads the MNIST csv into memory.
+
+ LOAD_CSV_ADDR: load_csv
+
+      load_csv: LOAD   csv_ptr
+                STORE  req_1
+                LOAD   request_addr
+                WRITE  0x0A
+
+                LOAD   req_2
+                JGZ    file_not_found
+
+                LOAD   req_3
+                STORE  CSV_BYTES
+
+                JMP    pop
+
+; -- file request --
+  request_addr: req_0
+         req_0: str_ptr                             ; pointer to file path
+         req_1: 0                                   ; destination, to copy from csv_ptr
+         req_2: 0                                   ; status
+         req_3: 0                                   ; words written
+
+; -- path to MNIST.csv --
+       str_ptr: s_0
+           s_0: 0x64                                ; 'd'
+           s_1: 0x61                                ; 'a'
+           s_2: 0x74                                ; 't'
+           s_3: 0x61                                ; 'a'
+           s_4: 0x2F                                ; '/'
+           s_5: 0x4D                                ; 'M'
+           s_6: 0x4E                                ; 'N'
+           s_7: 0x49                                ; 'I'
+           s_8: 0x53                                ; 'S'
+           s_9: 0x54                                ; 'T'
+          s_10: 0x2E                                ; '.'
+          s_11: 0x63                                ; 'c'
+          s_12: 0x73                                ; 's'
+          s_13: 0x76                                ; 'v'
+          s_14: 0x00                                ; null
+
+file_not_found: LOAD   fnf_ptr
+                STORE  param_0
+                LOAD   fnf_back
+                STORE  param_1
+                JMP    exit_with_err
+
+; -- error message --
+       fnf_ptr: f_0
+           f_0: 0x66                                ; 'f'
+           f_1: 0x69                                ; 'i'
+           f_2: 0x6C                                ; 'l'
+           f_3: 0x65                                ; 'e'
+           f_4: 0x20                                ; ' '
+           f_5: 0x6E                                ; 'n'
+           f_6: 0x6F                                ; 'o'
+           f_7: 0x74                                ; 't'
+           f_8: 0x20                                ; ' '
+           f_9: 0x66                                ; 'f'
+          f_10: 0x6F                                ; 'o'
+          f_11: 0x75                                ; 'u'
+          f_12: 0x6E                                ; 'n'
+          f_13: 0x64                                ; 'd'
+          f_14: 0x0A                                ; '\n'
+      fnf_back: f_14
+
+; --- load batch ---
+; param_0:  dataset to load from (0 = x_train, 1 = x_test)
+; param_1:  batch index in the selected dataset
+;
+; Loads and normalizes a batch of images into X.
+
+   LOAD_X_ADDR: load_batch
+
+   PIXEL_NORM: 256                                ; range is [0, 255], but we use 256 since it's a power of 2
+
+     image_idx: 0
+     pixel_idx: 0
+  relative_idx: 0
+  batch_offset: 0
+    source_idx: 0
+      dest_idx: 0
+
+    load_batch: LOAD   ZERO
+                STORE  image_idx
+
+                LOAD   BATCH_SIZE
+                MUL    INPUT_DIM
+                MUL    param_1
+                STORE  batch_offset
+
+    load_image: LOAD   image_idx
+                SUB    BATCH_SIZE
+                JZ     pop
+
+                LOAD   ZERO
+                STORE  pixel_idx
+                
+    load_pixel: LOAD   pixel_idx
+                SUB    INPUT_DIM
+                JZ     load_image_inc
+
+                LOAD   image_idx
+                MUL    INPUT_DIM
+                ADD    pixel_idx
+                STORE  relative_idx
+
+                LOAD   param_0
+                JZ     train_src_idx
+
+  test_src_idx: LOAD   x_test
+                JMP    store_indices
+                
+ train_src_idx: LOAD   x_train
+
+ store_indices: ADD    batch_offset
+                ADD    relative_idx
+                STORE  source_idx
+
+                LOAD   X
+                ADD    relative_idx
+                STORE  dest_idx
+
+                ; -- normalize pixel value --
+                LOAD   [source_idx]
+                MUL    S                          ; fixed-point adjustment
+                DIV    PIXEL_NORM
+                STORE  [dest_idx]
+
+                ; -- increment pixel_idx --
+
+                LOAD   pixel_idx
+                ADD    ONE
+                STORE  pixel_idx
+                JMP    load_pixel
+
+load_image_inc: LOAD   image_idx
+                ADD    ONE
+                STORE  image_idx
+                JMP    load_image
+
+; --- one-hot encode labels ---
+; param_0:  dataset to load from (0 = x_train, 1 = x_test)
+; param_1:  batch index in the selected dataset
+
+   LOAD_Y_ADDR: load_labels
+
+  label_offset: 0
+     label_idx: 0
+    encode_idx: 0
+     label_src: 0
+    label_dest: 0
+                
+                ; -- zero-fill ONE_HOT_Y --
+   load_labels: LOAD   ONE_HOT_Y
+                STORE  arg_0
+                LOAD   ONE_HOT_Y_SIZE
+                STORE  arg_1
+                LOAD   ZERO
+                STORE  arg_2
+
+                LOAD   FILL_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   BATCH_SIZE
+                MUL    param_1
+                STORE  label_offset
+
+                LOAD   ZERO
+                STORE  label_idx
+
+    label_loop: LOAD   label_idx
+                SUB    BATCH_SIZE
+                JZ     pop
+
+                LOAD   N_CLASSES
+                MUL    label_idx
+                STORE  encode_idx
+
+                LOAD   param_0
+                JZ     train_lbl_src
+
+  test_lbl_src: LOAD   y_test
+                JMP    store_lbl_src
+
+ train_lbl_src: LOAD   y_train
+
+ store_lbl_src: ADD    label_offset
+                ADD    label_idx
+                STORE  label_src
+
+                LOAD   [label_src]
+                ADD    encode_idx
+                ADD    ONE_HOT_Y
+                STORE  label_dest
+
+                ; -- set the hot bit --
+                LOAD   S                            ; 1.0 in fixed point
+                STORE  [label_dest]
+
+                LOAD   label_idx
+                ADD    ONE
+                STORE  label_idx
+                JMP    label_loop
+
+; --- elementwise addition ---
+; param_0:  pointer to array A
+; param_1:  pointer to array B
+; param_2:  pointer to result array C
+; param_3:  length of arrays
+;
+; Performs elementwise addition A + B, writing the result to C.
+
+      ADD_ADDR: init_add
+
+   add_rel_idx: 0
+     add_a_ptr: 0
+     add_b_ptr: 0
+     add_c_ptr: 0
+
+      init_add: LOAD   ZERO
+                STORE  add_rel_idx
+
+           add: LOAD   add_rel_idx
+                SUB    param_3
+                JZ     pop
+
+                LOAD   param_0
+                ADD    add_rel_idx
+                STORE  add_a_ptr
+
+                LOAD   param_1
+                ADD    add_rel_idx
+                STORE  add_b_ptr
+
+                LOAD   param_2
+                ADD    add_rel_idx
+                STORE  add_c_ptr
+
+                LOAD   [add_a_ptr]
+                ADD    [add_b_ptr]
+                STORE  [add_c_ptr]
+
+                LOAD   add_rel_idx
+                ADD    ONE
+                STORE  add_rel_idx
+                JMP    add
+
+; --- elementwise subtraction ---
+; param_0:  pointer to array A
+; param_1:  pointer to array B
+; param_2:  pointer to result array C
+; param_3:  length of arrays
+;
+; Performs elementwise subtraction A - B, writing the result to C.
+
+      SUB_ADDR: init_sub
+
+   sub_rel_idx: 0
+     sub_a_ptr: 0
+     sub_b_ptr: 0
+     sub_c_ptr: 0
+
+      init_sub: LOAD   ZERO
+                STORE  sub_rel_idx
+
+           sub: LOAD   sub_rel_idx
+                SUB    param_3
+                JZ     pop
+
+                LOAD   param_0
+                ADD    sub_rel_idx
+                STORE  sub_a_ptr
+
+                LOAD   param_1
+                ADD    sub_rel_idx
+                STORE  sub_b_ptr
+
+                LOAD   param_2
+                ADD    sub_rel_idx
+                STORE  sub_c_ptr
+
+                LOAD   [sub_a_ptr]
+                SUB    [sub_b_ptr]
+                STORE  [sub_c_ptr]
+
+                LOAD   sub_rel_idx
+                ADD    ONE
+                STORE  sub_rel_idx
+                JMP    sub
+
+; --- elementwise multiplication ---
+; param_0:  pointer to array A
+; param_1:  pointer to array B
+; param_2:  pointer to result array C
+; param_3:  length of arrays
+;
+; Performs elementwise multiplication A * B, writing the result to C.
+
+      MUL_ADDR: init_mul
+
+   mul_rel_idx: 0
+     mul_a_ptr: 0
+     mul_b_ptr: 0
+     mul_c_ptr: 0
+
+      init_mul: LOAD   ZERO
+                STORE  mul_rel_idx
+
+           mul: LOAD   mul_rel_idx
+                SUB    param_3
+                JZ     pop
+
+                LOAD   param_0
+                ADD    mul_rel_idx
+                STORE  mul_a_ptr
+
+                LOAD   param_1
+                ADD    mul_rel_idx
+                STORE  mul_b_ptr
+
+                LOAD   param_2
+                ADD    mul_rel_idx
+                STORE  mul_c_ptr
+
+                LOAD   [mul_a_ptr]
+                MUL    [mul_b_ptr]
+                DIV    S                            ; account for fixed-point representation
+                STORE  [mul_c_ptr]
+
+                LOAD   mul_rel_idx
+                ADD    ONE
+                STORE  mul_rel_idx
+                JMP    mul
+
+; --- scalar multiplication ---
+; param_0:  pointer to array A
+; param_1:  pointer to result array B
+; param_2:  scalar s
+; param_3:  length of array
+;
+; Performs scalar multiplication A * s, writing the result to B.
+; Assumes the scalar is in fixed-point representation.
+
+ MUL_SCLR_ADDR: init_mul_sclr
+
+ mul_s_rel_idx: 0
+   mul_s_a_ptr: 0
+   mul_s_b_ptr: 0
+
+ init_mul_sclr: LOAD   ZERO
+                STORE  mul_s_rel_idx
+
+      mul_sclr: LOAD   mul_s_rel_idx
+                SUB    param_3
+                JZ     pop
+
+                LOAD   param_0
+                ADD    mul_s_rel_idx
+                STORE  mul_s_a_ptr
+
+                LOAD   param_1
+                ADD    mul_s_rel_idx
+                STORE  mul_s_b_ptr
+
+                LOAD   [mul_s_a_ptr]
+                MUL    param_2
+                DIV    S
+                STORE  [mul_s_b_ptr]
+
+                LOAD   mul_s_rel_idx
+                ADD    ONE
+                STORE  mul_s_rel_idx
+                JMP    mul_sclr
+
+; --- array fill ---
+; param_0:  pointer to array
+; param_1:  length of array
+; param_2:  value to fill
+;
+; Fills an array with a value.
+
+     FILL_ADDR: init_fill
+
+      fill_end: 0
+
+     init_fill: LOAD   param_0
+                ADD    param_1
+                STORE  fill_end
+
+          fill: LOAD   fill_end
+                SUB    param_0
+                JZ     pop
+
+                LOAD   param_2
+                STORE  [param_0]
+
+                LOAD   param_0
+                ADD    ONE
+                STORE  param_0
+                JMP    fill
+
+; --- he array fill ---
+; param_0:  pointer to array
+; param_1:  length of array
+; param_2:  bounds of initialization
+;
+; Fills an array following He initialization:
+;
+; w = (r mod (2M + 1)) - M
+;
+; where M is the initialization bound.
+
+  FILL_HE_ADDR: init_fill_he
+
+   he_fill_end: 0
+he_inner_reslt: 0
+
+  init_fill_he: LOAD   param_0
+                ADD    param_1
+                STORE  he_fill_end
+
+                LOAD   param_2
+                MUL    TWO
+                ADD    ONE
+                STORE  he_inner_reslt
+
+       fill_he: LOAD   he_fill_end
+                SUB    param_0
+                JZ     pop
+
+                LOAD   RAND_ADDR
+                AND    MASK_7FFFFFFF                ; enforce positive, lose 1 bit of randomness
+                MOD    he_inner_reslt
+                SUB    param_2
+
+                STORE  [param_0]
+
+                LOAD   param_0
+                ADD    ONE
+                STORE  param_0
+                JMP    fill_he
+
+; --- count correct ---
+; param_0:  pointer to logits (BATCH_SIZE x N_CLASSES)
+; param_1:  pointer to one-hot labels (BATCH_SIZE x N_CLASSES)
+; param_2:  pointer to the word where the correct count is written
+;
+; Counts the number of correct predictions.
+
+ CORRECT_ADDR: count_correct
+
+       cc_row: 0
+       cc_col: 0
+   cc_row_off: 0                                    ; row * N_CLASSES
+  cc_best_val: 0
+  cc_best_idx: 0
+     cc_count: 0
+ cc_logit_ptr: 0
+ cc_label_ptr: 0
+
+count_correct: LOAD   ZERO
+               STORE  cc_row
+               STORE  cc_count
+
+ cc_row_loop:  LOAD   cc_row
+               SUB    BATCH_SIZE
+               JZ     cc_done
+
+               LOAD   cc_row
+               MUL    N_CLASSES
+               STORE  cc_row_off
+
+               ; -- seed argmax with column 0 --
+               ADD    param_0
+               STORE  cc_logit_ptr
+               LOAD   [cc_logit_ptr]
+               STORE  cc_best_val
+               LOAD   ZERO
+               STORE  cc_best_idx
+
+               LOAD   ONE
+               STORE  cc_col
+
+ cc_col_loop:  LOAD   cc_col
+               SUB    N_CLASSES
+               JZ     cc_check
+
+               LOAD   cc_row_off
+               ADD    param_0
+               ADD    cc_col
+               STORE  cc_logit_ptr
+
+               LOAD   [cc_logit_ptr]
+               SUB    cc_best_val
+               JGZ    cc_new_best                   ; strictly greater: update
+               JMP    cc_col_inc
+
+ cc_new_best:  LOAD   [cc_logit_ptr]
+               STORE  cc_best_val
+               LOAD   cc_col
+               STORE  cc_best_idx
+
+  cc_col_inc:  LOAD   cc_col
+               ADD    ONE
+               STORE  cc_col
+               JMP    cc_col_loop
+
+ ; -- is the label's hot bit at the predicted index? --
+    cc_check:  LOAD   cc_row_off
+               ADD    param_1
+               ADD    cc_best_idx
+               STORE  cc_label_ptr
+
+               LOAD   [cc_label_ptr]
+               JZ     cc_row_inc                    ; label is 0 here: wrong
+
+               LOAD   cc_count
+               ADD    ONE
+               STORE  cc_count
+
+  cc_row_inc:  LOAD   cc_row
+               ADD    ONE
+               STORE  cc_row
+               JMP    cc_row_loop
+
+     cc_done:  LOAD   cc_count
+               STORE  [param_2]
+               JMP    pop
+
+; --- error util ---
+; param_0:  pointer to message start
+; param_1:  pointer to message end
+;
+; Exits with a provided error message.
+
+ exit_with_err: LOAD   [error_ptr]
+                WRITE  0x01
+                LOAD   error_ptr
+                ADD    ONE
+                STORE  error_ptr
+                SUB    ONE
+                SUB    error_back
+                JZ     print_err_msg
+                JMP    exit_with_err
+
+ print_err_msg: LOAD   [param_0]
+                WRITE  0x01
+                LOAD   param_0
+                ADD    ONE
+                STORE  param_0
+                SUB    ONE
+                SUB    param_1
+                JZ     end
+                JMP    print_err_msg
+
+     error_ptr: e_0
+           e_0: 0x65                                ; 'e'
+           e_1: 0x72                                ; 'r'
+           e_2: 0x72                                ; 'r'
+           e_3: 0x6F                                ; 'o'
+           e_4: 0x72                                ; 'r'
+           e_5: 0x3A                                ; ':'
+           e_6: 0x20                                ; ' '
+    error_back: e_6
+
+; --- print string ---
+; param_0:  pointer to first item
+; param_1:  pointer to last item
+;
+; Prints an array to the terminal as a string of ASCII values.
+
+ STRING_ADDR: print_string
+    
+print_string: LOAD   param_0
+              SUB    param_1
+              SUB    ONE
+              JZ     pop
+
+              LOAD   [param_0]
+              WRITE  0x01
+
+              LOAD   param_0
+              ADD    ONE
+              STORE  param_0
+              JMP    print_string
+
+; --- print integer ---
+; param_0:  a non-negative integer to print
+;
+; Prints the integer's decimal digits to port 0x01, most significant first.
+
+ PRINT_N_ADDR: print_int
+
+   pi_divisor: 0
+
+    print_int: LOAD   ONE
+               STORE  pi_divisor
+
+; -- find the largest power of 10 with param_0 / divisor < 10 --
+  pi_find_div: LOAD   param_0
+               DIV    pi_divisor
+               SUB    TEN
+               JLZ    pi_print                      ; quotient < 10, divisor is correct
+
+               LOAD   pi_divisor
+               MUL    TEN
+               STORE  pi_divisor
+               JMP    pi_find_div
+
+; -- emit one digit per iteration --
+     pi_print: LOAD   param_0
+               DIV    pi_divisor                    ; leading digit (0-9)
+               ADD    ASCII_0
+               WRITE  0x01
+
+               LOAD   param_0
+               MOD    pi_divisor                    ; strip the leading digit
+               STORE  param_0
+
+               LOAD   pi_divisor
+               DIV    TEN
+               STORE  pi_divisor
+
+               LOAD   pi_divisor
+               JZ     pop                           ; all digits printed
+               JMP    pi_print
+
+; --- print array ---
+; param_0:  pointer to array start
+; param_1:  length of array
+;
+; Prints array elements to the terminal as separate lines.
+
+  PRINT_ADDR: setup_print
+
+   print_end: 0
+
+ setup_print: LOAD   param_0
+              ADD    param_1
+              STORE  print_end
+
+       print: LOAD   print_end
+              SUB    param_0
+              JZ     pop
+
+              LOAD   [param_0]
+              WRITE  0x00
+
+              LOAD   param_0
+              ADD    ONE
+              STORE  param_0
+              JMP    print
+
+; --- print array sum ---
+; param_0:  pointer to array start
+; param_1:  length of array
+;
+; Prints the absolute sum of an array to the terminal.
+
+PRINT_S_ADDR: setup_prnt_s
+
+ print_s_end: 0
+ print_s_sum: 0
+
+setup_prnt_s: LOAD   param_0
+              ADD    param_1
+              STORE  print_s_end
+              LOAD   ZERO
+              STORE  print_s_sum
+
+print_s_loop: LOAD   print_s_end
+              SUB    param_0
+              JZ     print_sum
+
+              LOAD   [param_0]
+              JGZ    prnt_add_pos
+              MUL    NEG_ONE   
+
+prnt_add_pos: ADD    print_s_sum
+              STORE  print_s_sum
+
+              LOAD   param_0
+              ADD    ONE
+              STORE  param_0
+              JMP    print_s_loop
+
+   print_sum: LOAD   print_s_sum
+              WRITE  0x00
+              JMP    pop
+
+; --- call stack ---
+is_stack_initd: 0                                   ; track stack initialization status
+            sp: 0                                   ; stack pointer (to set in init)
+       ret_tmp: 0                                   ; temporary variable
+
+    init_stack: LOAD   stack
+                STORE  sp
+
+                LOAD   ONE
+                STORE  is_stack_initd
+
+                JMP    continue_push
+
+          push: LOAD   is_stack_initd
+                JZ     init_stack
+          
+ continue_push: LOAD   stack
+                ADD    STACK_SIZE
+                SUB    sp
+                JZ     overflow
+                JLZ    overflow
+
+                ; -- save caller's args --
+                LOAD   param_0
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                LOAD   param_1
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                LOAD   param_2
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                LOAD   param_3
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                LOAD   param_4
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                LOAD   param_5
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                LOAD   param_6
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                ; -- save return address (line after "JMP push") --
+                LOAD   return
+                ADD    ONE
+                ADD    ONE
+                STORE  [sp]
+                LOAD   sp
+                ADD    ONE
+                STORE  sp
+
+                ; -- install callee's args --
+                LOAD   arg_0
+                STORE  param_0
+                LOAD   arg_1
+                STORE  param_1
+                LOAD   arg_2
+                STORE  param_2
+                LOAD   arg_3
+                STORE  param_3
+                LOAD   arg_4
+                STORE  param_4
+                LOAD   arg_5
+                STORE  param_5
+                LOAD   arg_6
+                STORE  param_6
+
+                JMP    [destination]                ; go to function
+
+           pop: LOAD   sp
+                SUB    stack
+                JZ     underflow
+
+                ; -- return address --
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  ret_tmp
+
+                ; -- restore caller's args --
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_6
+
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_5
+
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_4
+
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_3
+
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_2
+
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_1
+
+                LOAD   sp
+                SUB    ONE
+                STORE  sp
+                LOAD   [sp]
+                STORE  param_0
+
+                JMP    [ret_tmp]                    ; go to return address
+
+      overflow: LOAD   overflow_ptr
+                STORE  param_0
+                LOAD   overflow_back
+                STORE  param_1
+                JMP    exit_with_err
+
+     underflow: LOAD   underflow_ptr
+                STORE  param_0
+                LOAD   underflow_back
+                STORE  param_1
+                JMP    exit_with_err
+
+; -- error message strings --
+
+  overflow_ptr: o_0
+           o_0: 0x73                                ; 's'
+           o_1: 0x74                                ; 't'
+           o_2: 0x61                                ; 'a'
+           o_3: 0x63                                ; 'c'
+           o_4: 0x6B                                ; 'k'
+           o_5: 0x20                                ; ' '
+           o_6: 0x6F                                ; 'o'
+           o_7: 0x76                                ; 'v'
+           o_8: 0x65                                ; 'e'
+           o_9: 0x72                                ; 'r'
+          o_10: 0x66                                ; 'f'
+          o_11: 0x6C                                ; 'l'
+          o_12: 0x6F                                ; 'o'
+          o_13: 0x77                                ; 'w'
+          o_14: 0x0A                                ; '\n'
+ overflow_back: o_14
+
+ underflow_ptr: u_0
+           u_0: 0x73                                ; 's'
+           u_1: 0x74                                ; 't'
+           u_2: 0x61                                ; 'a'
+           u_3: 0x63                                ; 'c'
+           u_4: 0x6B                                ; 'k'
+           u_5: 0x20                                ; ' '
+           u_6: 0x75                                ; 'u'
+           u_7: 0x6E                                ; 'n'
+           u_8: 0x64                                ; 'd'
+           u_9: 0x65                                ; 'e'
+          u_10: 0x72                                ; 'r'
+          u_11: 0x66                                ; 'f'
+          u_12: 0x6C                                ; 'l'
+          u_13: 0x6F                                ; 'o'
+          u_14: 0x77                                ; 'w'
+          u_15: 0x0A                                ; '\n'
+underflow_back: u_15
+
+           end: JMP end
+
+   PROGRAM_END: sentinel
+      sentinel: 0
