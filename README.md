@@ -21,6 +21,8 @@ Linear(10)
 
 Param count: **50,890**.
 
+**Note:** currently, we do not apply bias in linear layers. Bias implementation coming soon.
+
 ## Results
 
 After training for **15** epochs at a batch size of **256**, the network reaches **TBD** test accuracy.
