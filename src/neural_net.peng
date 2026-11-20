@@ -365,9 +365,24 @@ INIT_PTRS_ADDR: init_ptrs
    setup_train: LOAD   ZERO
                 STORE  curr_epoch
                 STORE  curr_batch
+
                 LOAD   N_TRAIN_IMAGES
                 DIV    BATCH_SIZE
                 STORE  num_batches
+
+                ; -- print training header --
+                LOAD   training_ptr
+                STORE  arg_0
+                LOAD   training_back
+                STORE  arg_1
+
+                LOAD   STRING_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
                 JMP    train_epoch
 
      epoch_inc: LOAD   ZERO
@@ -585,9 +600,25 @@ INIT_PTRS_ADDR: init_ptrs
                 JMP    train_batch
 
 ; -- string assets --
-   ASCII_SPACE: 0x20
-   ASCII_SLASH: 0x2F
-ASCII_CARRIAGE: 0x0D
+  training_ptr: tr_0
+          tr_0: 0x3D                                ; '='
+          tr_1: 0x3D                                ; '='
+          tr_2: 0x3D                                ; '='
+          tr_3: 0x20                                ; ' '
+          tr_4: 0x54                                ; 'T'
+          tr_5: 0x72                                ; 'r'
+          tr_6: 0x61                                ; 'a'
+          tr_7: 0x69                                ; 'i'
+          tr_8: 0x6E                                ; 'n'
+          tr_9: 0x69                                ; 'i'
+         tr_10: 0x6E                                ; 'n'
+         tr_11: 0x67                                ; 'g'
+         tr_12: 0x20                                ; ' '
+         tr_13: 0x3D                                ; '='
+         tr_14: 0x3D                                ; '='
+         tr_15: 0x3D                                ; '='
+         tr_16: 0x0A                                ; '\n'
+training_back: tr_16
 
      batch_ptr: b_0
            b_0: 0x42                                ; 'B'
