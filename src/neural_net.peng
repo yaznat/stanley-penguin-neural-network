@@ -1,8 +1,10 @@
 ; --- Neural Network in Stanley/Penguin ---
 ;
-; Trains a neural network on a subset of 20992 images from the MNIST dataset, reaching TODO test accuracy on a 2048 image test set.
-; Uses a fixed-point representation to work within integer arithmetic.
-; Uses a custom call stack implementation to enable reusable functions.
+; Trains a neural network on a subset of 20992 images from the MNIST dataset, reaching 88.38% test accuracy on a 2048 image test set.
+; We use a fixed-point representation to work within integer arithmetic.
+; We use a custom call stack implementation to enable reusable functions.
+;
+; Note: currently, we do not apply bias in linear layers as the implementation is incomplete — coming soon.
 ;
 ; -- Architecture --
 ; - Linear(64)
@@ -27,7 +29,7 @@ N_TRAIN_IMAGES: 20992
 
           SEED: 42
 
-    STACK_SIZE: 128                                 ; words allocated for the call stack
+    STACK_SIZE: 48                                  ; words allocated for the call stack
 
 ; --- fixed-point representation ---
 ;
@@ -266,7 +268,7 @@ INIT_PTRS_ADDR: init_ptrs
 ; --- main ---
                 
          start: LOAD   SEED
-                WRITE  0x14                         ; seeds the RNG
+                WRITE  0x14                         ; seed the RNG
 
                 ; -- calculate pointers --
                 LOAD   INIT_PTRS_ADDR
@@ -654,15 +656,15 @@ training_back: tr_16
     batch_back: b_5
 
      epoch_ptr: ep_0
-           ep_0: 0x45                                ; 'E'
-           ep_1: 0x70                                ; 'p'
-           ep_2: 0x6F                                ; 'o'
-           ep_3: 0x63                                ; 'c'
-           ep_4: 0x68                                ; 'h'
-           ep_5: 0x3A                                ; ':'
+          ep_0: 0x45                                ; 'E'
+          ep_1: 0x70                                ; 'p'
+          ep_2: 0x6F                                ; 'o'
+          ep_3: 0x63                                ; 'c'
+          ep_4: 0x68                                ; 'h'
+          ep_5: 0x3A                                ; ':'
     epoch_back: ep_5
     
-  correct_ptr: c_0
+   correct_ptr: c_0
            c_0: 0x43                                ; 'C'
            c_1: 0x6F                                ; 'o'
            c_2: 0x72                                ; 'r'
