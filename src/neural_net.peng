@@ -25,6 +25,8 @@ N_TRAIN_IMAGES: 20992
         EPOCHS: 10
     LR_PERCENT: 10                                  ; learning rate as an integer percentage
 
+          SEED: 42
+
     STACK_SIZE: 128                                 ; words allocated for the call stack
 
 ; --- fixed-point representation ---
@@ -262,8 +264,12 @@ INIT_PTRS_ADDR: init_ptrs
                 JMP    pop
 
 ; --- main ---
+                
+         start: LOAD   SEED
+                WRITE  0x14                         ; seeds the RNG
+
                 ; -- calculate pointers --
-         start: LOAD   INIT_PTRS_ADDR
+                LOAD   INIT_PTRS_ADDR
                 STORE  destination
                 LOAD   IP_ADDR
                 STORE  return

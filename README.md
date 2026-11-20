@@ -4,7 +4,7 @@ A neural network implemented in the [Stanley/Penguin](https://github.com/yaznat/
 
 ## Dataset
 
-- We train the network on a random subset of **20,992** images from the [MNIST dataset](https://en.wikipedia.org/wiki/MNIST_database).
+- We train the network on a subset of **20,992** images from the [MNIST dataset](https://en.wikipedia.org/wiki/MNIST_database).
 - We evaluate the network on a separate set of **2048** images.
 
 ## Architecture
@@ -25,7 +25,7 @@ Param count: **50,890**.
 
 ## Results
 
-After training for **15** epochs at a batch size of **256**, the network reaches **TBD** test accuracy.
+After training for **10** epochs at a batch size of **256**, the network reaches **88.38%** test accuracy.
 
 ## Implementation Challenges
 
