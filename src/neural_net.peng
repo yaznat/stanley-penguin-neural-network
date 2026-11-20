@@ -56,6 +56,24 @@ N_TRAIN_IMAGES: 20992
 
  MASK_7FFFFFFF: 0x7FFFFFFF
 
+; --- ascii constants ---
+   ASCII_SPACE: 0x20
+   ASCII_SLASH: 0x2F
+ASCII_CARRIAGE: 0x0D
+   ASCII_COMMA: 0x2C
+ ASCII_NEWLINE: 0x0A
+
+       ASCII_0: 0x30
+       ASCII_1: 0x31
+       ASCII_2: 0x32
+       ASCII_3: 0x33
+       ASCII_4: 0x34
+       ASCII_5: 0x35
+       ASCII_6: 0x36
+       ASCII_7: 0x37
+       ASCII_8: 0x38
+       ASCII_9: 0x39
+
 ; --- global call values (managed by the stack) ---
    destination: 0                                   ; set by caller: LOAD FUNC_ADDR / STORE destination
         return: 0                                   ; set by caller: LOAD IP_ADDR / STORE return / "JMP push"
@@ -1168,7 +1186,7 @@ n_test_batches: 0
                 LOAD   ZERO
                 STORE  k
 
-                ; -- initialize c to zero --
+                ; -- initialize C to zero --
                 LOAD   param_6
                 STORE  arg_0
 
@@ -1192,7 +1210,6 @@ n_test_batches: 0
                 SUB    param_0
                 JZ     pop
 
-                ; -- reset j --
                 LOAD   ZERO
                 STORE  j
                 JMP    j_loop
@@ -1206,7 +1223,6 @@ n_test_batches: 0
                 SUB    param_3
                 JZ     i_inc
        
-                ; -- reset k --
                 LOAD   ZERO
                 STORE  k
                 JMP    k_loop
@@ -1439,20 +1455,6 @@ MAT_TRANS_ADDR: transpose
   LOAD_DS_ADDR: load_ds
 
      CSV_BYTES: 0                                   ; to calculate in `load_csv`
-
-; -- ascii values --
-       ASCII_0: 0x30
-       ASCII_1: 0x31
-       ASCII_2: 0x32
-       ASCII_3: 0x33
-       ASCII_4: 0x34
-       ASCII_5: 0x35
-       ASCII_6: 0x36
-       ASCII_7: 0x37
-       ASCII_8: 0x38
-       ASCII_9: 0x39
-   ASCII_COMMA: 0x2C
- ASCII_NEWLINE: 0x0A
 
 ; -- local variables --
   curr_csv_row: 0
@@ -2367,8 +2369,7 @@ is_stack_initd: 0                                   ; track stack initialization
 
                 ; -- save return address (line after "JMP push") --
                 LOAD   return
-                ADD    ONE
-                ADD    ONE
+                ADD    TWO
                 STORE  [sp]
                 LOAD   sp
                 ADD    ONE
