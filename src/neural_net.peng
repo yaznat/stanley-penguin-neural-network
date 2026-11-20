@@ -1,6 +1,6 @@
 ; --- Neural Network in Stanley/Penguin ---
 ;
-; Trains a neural network on a subset of 18000 images from the MNIST dataset, reaching TODO test accuracy on a 2000 image test set.
+; Trains a neural network on a subset of 20992 images from the MNIST dataset, reaching TODO test accuracy on a 2048 image test set.
 ; Uses a fixed-point representation to work within integer arithmetic.
 ; Uses a custom call stack implementation to enable reusable functions.
 ;
@@ -270,6 +270,14 @@ INIT_PTRS_ADDR: init_ptrs
 
                 ; -- run training loop --         
                 LOAD   TRAIN_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- evaluate network on test set --
+                LOAD   EVAL_ADDR
                 STORE  destination
                 LOAD   IP_ADDR
                 STORE  return
@@ -599,18 +607,16 @@ ASCII_CARRIAGE: 0x0D
            ep_5: 0x3A                                ; ':'
     epoch_back: ep_5
     
-  correct_ptr: a_0
-           a_0: 0x43                                ; 'C'
-           a_1: 0x6F                                ; 'o'
-           a_2: 0x72                                ; 'r'
-           a_3: 0x72                                ; 'r'
-           a_4: 0x65                                ; 'e'
-           a_5: 0x63                                ; 'c'
-           a_6: 0x74                                ; 't'
-           a_7: 0x3A                                ; ':'
-  correct_back: a_7
-
-
+  correct_ptr: c_0
+           c_0: 0x43                                ; 'C'
+           c_1: 0x6F                                ; 'o'
+           c_2: 0x72                                ; 'r'
+           c_3: 0x72                                ; 'r'
+           c_4: 0x65                                ; 'e'
+           c_5: 0x63                                ; 'c'
+           c_6: 0x74                                ; 't'
+           c_7: 0x3A                                ; ':'
+  correct_back: c_7
 
 ; --- forward pass ---
 ;
@@ -954,6 +960,146 @@ update_weights: LOAD   dW1
                 JMP    push
 
                 JMP    pop
+
+; --- evaluate network ---
+;
+; Evaluates the network on the test set.
+
+     EVAL_ADDR: setup_eval
+
+       test_cc: 0
+ test_batch_cc: 0
+test_batch_idx: 0
+n_test_batches: 0
+      tbcc_ptr: test_batch_cc
+  
+    setup_eval: LOAD   ZERO
+                STORE  test_cc
+                STORE  test_batch_idx
+
+                LOAD   N_TEST_IMAGES
+                DIV    BATCH_SIZE
+                STORE  n_test_batches
+
+          eval: LOAD   test_batch_idx
+                SUB    n_test_batches
+                JZ     print_eval
+
+                ; -- load x and y --
+                LOAD   ONE
+                STORE  arg_0
+                LOAD   test_batch_idx
+                STORE  arg_1
+
+                LOAD   LOAD_X_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   LOAD_Y_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- forward pass for logits --
+                LOAD   FORWARD_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- count correct --
+                LOAD   Z2
+                STORE  arg_0
+                LOAD   ONE_HOT_Y
+                STORE  arg_1
+                LOAD   tbcc_ptr
+                STORE  arg_2
+
+                LOAD   CORRECT_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                ; -- add to total --
+                LOAD   test_batch_cc
+                ADD    test_cc
+                STORE  test_cc
+
+                LOAD   test_batch_idx
+                ADD    ONE
+                STORE  test_batch_idx
+
+                JMP    eval
+
+    print_eval: LOAD   test_acc_ptr
+                STORE  arg_0
+                LOAD   test_acc_back
+                STORE  arg_1
+
+                LOAD   STRING_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SPACE
+                WRITE  0x01
+
+                LOAD   test_cc
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_SLASH
+                WRITE  0x01
+
+                LOAD   N_TEST_IMAGES
+                STORE  arg_0
+
+                LOAD   PRINT_N_ADDR
+                STORE  destination
+                LOAD   IP_ADDR
+                STORE  return
+
+                JMP    push
+
+                LOAD   ASCII_NEWLINE
+                WRITE  0x01
+
+
+                JMP    pop
+
+; -- string asset --
+  test_acc_ptr: t_0
+           t_0: 0x54                                ; 'T'
+           t_1: 0x65                                ; 'e'
+           t_2: 0x73                                ; 's'
+           t_3: 0x74                                ; 't'
+           t_4: 0x20                                ; ' '
+           t_5: 0x41                                ; 'A'
+           t_6: 0x63                                ; 'c'
+           t_7: 0x63                                ; 'c'
+           t_8: 0x75                                ; 'u'
+           t_9: 0x72                                ; 'r'
+          t_10: 0x61                                ; 'a'
+          t_11: 0x63                                ; 'c'
+          t_12: 0x79                                ; 'y'
+          t_13: 0x3A                                ; ':'
+ test_acc_back: t_13
 
 ; --- matmul ---
 ; param_0:  rows in matrix A
